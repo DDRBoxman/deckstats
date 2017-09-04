@@ -84,7 +84,7 @@ func drawTempToKey(label string, value float32, key int) {
 		Name: "Roboto",
 	})
 
-	gc.FillStringAt(fmt.Sprintf("%.1f", value), 10, 32+20)
+	gc.FillStringAt(fmt.Sprintf("%.0f°", value), 10, 32+20)
 
 	gc.SetFontSize(8)
 	gc.FillStringAt(label, 10, 72-8)
