@@ -12,6 +12,8 @@ import (
 	"github.com/karalabe/hid"
 	"github.com/llgcode/draw2d"
 	"github.com/llgcode/draw2d/draw2dimg"
+
+	"github.com/DDRBoxman/deckstats/floatbuffer"
 )
 
 var NUM_KEYS = 15
@@ -27,6 +29,9 @@ var brightness = []byte{0x05, 0x55, 0xAA, 0xD1, 0x01, 0, 0x00,
 
 var streamDeck *hid.Device
 
+var cpuTemps *floatbuffer.Buffer
+var gpuTemps *floatbuffer.Buffer
+
 type OHMSensor struct {
 	Name  string
 	Value float32
@@ -35,9 +40,19 @@ type OHMSensor struct {
 func main() {
 	draw2d.SetFontFolder("./fonts")
 
+	var err error
+	cpuTemps, err = floatbuffer.NewBuffer(288) // store 4 seconds per pixel (almost 5 minutes)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gpuTemps, err = floatbuffer.NewBuffer(288) // store 4 seconds per pixel (almost 5 minutes)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	devices := hid.Enumerate(4057, 96)
 
-	var err error
 	streamDeck, err = devices[0].Open()
 	if err != nil {
 		log.Fatal(err)
@@ -49,7 +64,7 @@ func main() {
 	go readLoop(streamDeck)
 
 	for {
-	time.Sleep(1000)
+		time.Sleep(2000)
 
 		var dst []OHMSensor
 		q := `Select * from Sensor Where (Parent LIKE "/intelcpu/[0-9]" OR Parent LIKE "/amdcpu/[0-9]") AND SensorType = "Temperature"`
@@ -60,6 +75,10 @@ func main() {
 
 		drawTempToKey("CPU", dst[4].Value, 4)
 
+		cpuTemps.Write(dst[4].Value)
+
+		drawTempGraphToKey(cpuTemps, 9)
+
 		q = `Select * from Sensor Where (Parent LIKE "/nvidiagpu/[0-9]" OR Parent LIKE "/atigpu/[0-9]") AND SensorType = "Temperature"`
 		err = wmi.Query(q, &dst, ".", "root\\OpenHardwareMonitor")
 		if err != nil {
@@ -67,9 +86,38 @@ func main() {
 		}
 
 		drawTempToKey("GPU", dst[0].Value, 3)
+
+		gpuTemps.Write(dst[0].Value)
+
+		drawTempGraphToKey(gpuTemps, 8)
 	}
 	
 	wg.Wait()
+}
+
+func drawTempGraphToKey(tempBuffer *floatbuffer.Buffer, key int) {
+	dest := image.NewRGBA(image.Rect(0, 0, ICON_SIZE, ICON_SIZE))
+	gc := draw2dimg.NewGraphicContext(dest)
+
+	gc.SetStrokeColor(color.RGBA{0xff, 0x00, 0x00, 0xff})
+	gc.SetLineWidth(1)
+
+	temps := tempBuffer.Floats()
+
+	for i := 0; i<len(temps); i+=4 {
+		reading := temps[i:i+4]
+		
+		var total float32 = 0
+		for _, value:= range reading {
+			total += value
+		}
+
+		gc.MoveTo(float64(i / 4), float64(ICON_SIZE))
+		gc.LineTo(float64(i / 4),  float64(ICON_SIZE) - float64(total / float32(4)))
+		gc.Stroke()
+	}
+
+	writeImageToKey(dest, key)
 }
 
 func drawTempToKey(label string, value float32, key int) {
@@ -84,9 +132,9 @@ func drawTempToKey(label string, value float32, key int) {
 		Name: "Roboto",
 	})
 
-	gc.FillStringAt(fmt.Sprintf("%.0f°", value), 10, 32+20)
+	gc.FillStringAt(fmt.Sprintf("%.0f°", value), 10, 32+12)
 
-	gc.SetFontSize(8)
+	gc.SetFontSize(14)
 	gc.FillStringAt(label, 10, 72-8)
 
 	writeImageToKey(dest, key)
